@@ -214,7 +214,7 @@ class NotificationsPluginBindings {
   ) {
     throw Exception(
       'Cancel does not work on Windows atm',
-    )
+    );
   }
 
   late final _cancelNotificationPtr = _lookup<
