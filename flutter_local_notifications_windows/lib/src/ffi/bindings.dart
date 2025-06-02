@@ -212,10 +212,9 @@ class NotificationsPluginBindings {
     ffi.Pointer<NativePlugin> plugin,
       Object id,
   ) {
-    return _cancelNotification(
-      plugin,
-      id,
-    );
+    throw Exception(
+      'Cancel does not work on Windows atm',
+    )
   }
 
   late final _cancelNotificationPtr = _lookup<
