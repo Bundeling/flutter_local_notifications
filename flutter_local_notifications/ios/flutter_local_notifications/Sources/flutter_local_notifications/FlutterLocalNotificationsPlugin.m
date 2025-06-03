@@ -974,6 +974,7 @@ static FlutterError *getFlutterError(NSError *error) {
     didReceiveNotificationResponse:(UNNotificationResponse *)response
              withCompletionHandler:(void (^)(void))completionHandler
     API_AVAILABLE(ios(10.0)) {
+    NSString *payload;
   if (![self isAFlutterLocalNotification:response.notification.request.content
                                              .userInfo]) {
       // Remote push notification from FCM
