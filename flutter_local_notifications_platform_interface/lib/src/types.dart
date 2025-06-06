@@ -50,7 +50,7 @@ class ActiveNotification {
   ///
   /// This will be null if the notification was outsided of the plugin's
   /// control e.g. on iOS and via Firebase Cloud Messaging.
-  final int? id;
+  final Object? id;
 
   /// The notification's channel id.
   ///
@@ -100,7 +100,7 @@ class NotificationResponse {
   ///
   /// This is nullable as support for this only supported for notifications
   /// created using version 10 or newer of this plugin.
-  final int? id;
+  final Object? id;
 
   /// The id of the action that was triggered.
   final String? actionId;

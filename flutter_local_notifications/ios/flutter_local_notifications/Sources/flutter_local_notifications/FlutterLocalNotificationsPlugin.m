@@ -87,6 +87,7 @@ NSString *const TIME_ZONE_NAME = @"timeZoneName";
 NSString *const MATCH_DATE_TIME_COMPONENTS = @"matchDateTimeComponents";
 
 NSString *const NOTIFICATION_ID = @"NotificationId";
+NSString *const NOTIFICATION_ID_FCM = @"not_id";
 NSString *const PAYLOAD = @"payload";
 NSString *const EXTRA = @"extra";
 NSString *const NOTIFICATION_LAUNCHED_APP = @"notificationLaunchedApp";
@@ -318,17 +319,28 @@ static FlutterError *getFlutterError(NSError *error) {
     for (UNNotification *notification in notifications) {
       NSMutableDictionary *activeNotification =
           [[NSMutableDictionary alloc] init];
-      activeNotification[ID] =
-          notification.request.content.userInfo[NOTIFICATION_ID];
+    
+        NSDictionary *userInfo = notification.request.content.userInfo;
+    
+        if(notification.request.content.userInfo[NOTIFICATION_ID] != nil) {
+            activeNotification[ID] = notification.request.content.userInfo[NOTIFICATION_ID];
+        } else {
+            activeNotification[ID] = notification.request.content.userInfo[NOTIFICATION_ID_FCM];
+        }
+        
       if (notification.request.content.title != nil) {
         activeNotification[TITLE] = notification.request.content.title;
       }
       if (notification.request.content.body != nil) {
-        activeNotification[BODY] = notification.request.content.body;
+          activeNotification[BODY] = notification.request.content.body;
       }
-      if (notification.request.content.userInfo[PAYLOAD] != [NSNull null]) {
+
+      if (notification.request.content.userInfo[PAYLOAD] != nil) {
         activeNotification[PAYLOAD] =
             notification.request.content.userInfo[PAYLOAD];
+      } else if (notification.request.content.userInfo[EXTRA] != nil) {
+          activeNotification[PAYLOAD] =
+                  notification.request.content.userInfo[EXTRA];
       }
       [activeNotifications addObject:activeNotification];
     }
