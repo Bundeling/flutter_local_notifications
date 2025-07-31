@@ -273,6 +273,10 @@ public class FlutterLocalNotificationsPlugin
     if (VERSION.SDK_INT >= VERSION_CODES.M) {
       flags |= PendingIntent.FLAG_IMMUTABLE;
     }
+
+    Bundle extras = new Bundle();
+    extras.putString(PAYLOAD, notificationDetails.payload);
+
     PendingIntent pendingIntent =
         PendingIntent.getActivity(context, notificationDetails.id, intent, flags);
     DefaultStyleInformation defaultStyleInformation =
@@ -293,6 +297,7 @@ public class FlutterLocalNotificationsPlugin
             .setPriority(notificationDetails.priority)
             .setOngoing(BooleanUtils.getValue(notificationDetails.ongoing))
             .setSilent(BooleanUtils.getValue(notificationDetails.silent))
+            .setExtras(extras)
             .setOnlyAlertOnce(BooleanUtils.getValue(notificationDetails.onlyAlertOnce));
 
     if (notificationDetails.actions != null) {
@@ -1612,6 +1617,7 @@ public class FlutterLocalNotificationsPlugin
         activeNotificationPayload.put("body", notification.extras.getCharSequence("android.text"));
         activeNotificationPayload.put(
             "bigText", notification.extras.getCharSequence("android.bigText"));
+        activeNotificationPayload.put("payload", notification.extras.getString(PAYLOAD));
         activeNotificationsPayload.add(activeNotificationPayload);
       }
       result.success(activeNotificationsPayload);

@@ -321,12 +321,9 @@ static FlutterError *getFlutterError(NSError *error) {
           [[NSMutableDictionary alloc] init];
     
         NSDictionary *userInfo = notification.request.content.userInfo;
-    
-        if(notification.request.content.userInfo[NOTIFICATION_ID] != nil) {
-            activeNotification[ID] = notification.request.content.userInfo[NOTIFICATION_ID];
-        } else {
-            activeNotification[ID] = notification.request.content.userInfo[NOTIFICATION_ID_FCM];
-        }
+
+        // Use the identifier, so it can be cancelled
+        activeNotification[ID] = notification.request.identifier;
         
       if (notification.request.content.title != nil) {
         activeNotification[TITLE] = notification.request.content.title;
