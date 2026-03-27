@@ -337,7 +337,7 @@ class FlutterLocalNotificationsPlugin {
       await resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin
           >()
-          ?.cancel(id is String ? int.tryParse(id)! : id as int, tag: tag);
+          ?.cancel(id: id is String ? int.tryParse(id)! : id as int, tag: tag);
     } else {
       await FlutterLocalNotificationsPlatform.instance.cancel(id: id);
     }
