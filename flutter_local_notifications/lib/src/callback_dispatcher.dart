@@ -31,7 +31,7 @@ void callbackDispatcher() {
         .map<Map<String, dynamic>>(
           (Map<dynamic, dynamic> event) => Map.castFrom(event),
         )
-        .listen((Map<String, dynamic> event) {
+        .listen((Map<String, dynamic> event) async {
           final Object notificationId = event['notificationId'];
           final int id;
           if (notificationId is int) {
@@ -41,22 +41,34 @@ void callbackDispatcher() {
           } else {
             id = -1;
           }
-          // A plain action tap doesn't include a response type, so default to
-          // it when none is provided.
-          final Object? responseTypeIndex = event['notificationResponseType'];
-          final NotificationResponseType notificationResponseType =
-              responseTypeIndex is int
-              ? NotificationResponseType.values[responseTypeIndex]
-              : NotificationResponseType.selectedNotificationAction;
-          callback?.call(
-            NotificationResponse(
-              id: id,
-              actionId: event['actionId'],
-              input: event['input'],
-              payload: event['payload'],
-              notificationResponseType: notificationResponseType,
-            ),
-          );
+          try {
+            // A plain action tap doesn't include a response type, so default to
+            // it when none is provided.
+            final Object? responseTypeIndex = event['notificationResponseType'];
+            final NotificationResponseType notificationResponseType =
+                responseTypeIndex is int
+                ? NotificationResponseType.values[responseTypeIndex]
+                : NotificationResponseType.selectedNotificationAction;
+            final dynamic handled = (callback as Function?)?.call(
+              NotificationResponse(
+                id: id,
+                actionId: event['actionId'],
+                input: event['input'],
+                payload: event['payload'],
+                notificationResponseType: notificationResponseType,
+              ),
+            );
+            if (handled is Future) {
+              await handled;
+            }
+          } finally {
+            try {
+              // Ends the iOS background task keeping the process alive.
+              await channel.invokeMethod<void>('backgroundActionHandled');
+            } on MissingPluginException {
+              // Other platforms don't implement the acknowledgement.
+            }
+          }
         });
   });
 }

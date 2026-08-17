@@ -316,15 +316,16 @@ class WebFlutterLocalNotificationsPlugin
   }
 
   @override
-  Future<void> cancel({required int id}) async {
+  Future<void> cancel({required Object id}) async {
     if (_registration == null) {
       return;
     }
 
+    final int parsedId = id is String ? int.parse(id) : id as int;
     final List<Notification> notifications = await _registration!
         .getDartNotifications();
     final Notification? notification = notifications.firstWhereOrNull(
-      (Notification notification) => notification.id == id,
+      (Notification notification) => notification.id == parsedId,
     );
     notification?.close();
   }

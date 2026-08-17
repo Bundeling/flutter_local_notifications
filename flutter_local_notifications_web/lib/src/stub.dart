@@ -28,7 +28,7 @@ class WebFlutterLocalNotificationsPlugin
       WebNotificationPermission.denied;
 
   @override
-  Future<void> cancel({required int id}) async {}
+  Future<void> cancel({required Object id}) async {}
 
   @override
   Future<void> cancelAll() async {}

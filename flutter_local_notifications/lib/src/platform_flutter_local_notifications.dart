@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:ui';
 
 import 'package:clock/clock.dart';
@@ -35,9 +36,16 @@ const MethodChannel _channel = MethodChannel(
 class MethodChannelFlutterLocalNotificationsPlugin
     extends FlutterLocalNotificationsPlatform {
   @override
-  Future<void> cancel({required int id}) {
-    validateId(id);
-    return _channel.invokeMethod('cancel', id);
+  Future<void> cancel({required Object id}) {
+    final Object parsedId;
+    if(id is String && Platform.isAndroid) {
+      parsedId = int.tryParse(id)!;
+    } else if(id is int && Platform.isIOS) {
+      parsedId = id.toString();
+    } else {
+      parsedId = id;
+    }
+    return _channel.invokeMethod('cancel', parsedId);
   }
 
   @override
@@ -468,9 +476,7 @@ class AndroidFlutterLocalNotificationsPlugin
   /// then the notification that matches both the id and the tag will
   /// be canceled. `tag` has no effect on other platforms.
   @override
-  Future<void> cancel({required int id, String? tag}) async {
-    validateId(id);
-
+  Future<void> cancel({required Object id, String? tag}) async {
     return _channel.invokeMethod('cancel', <String, Object?>{
       'id': id,
       'tag': tag,
