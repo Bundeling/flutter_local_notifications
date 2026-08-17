@@ -12,7 +12,10 @@ dependencies:
   collection: ^1.19.1
   flutter:
     sdk: flutter
-  flutter_local_notifications_platform_interface: ^12.0.0
+  flutter_local_notifications_platform_interface:
+    git:
+      url: https://github.com/Bundeling/flutter_local_notifications.git
+      path: flutter_local_notifications_platform_interface
   timezone: ^0.11.0
   web: ^1.1.1
 

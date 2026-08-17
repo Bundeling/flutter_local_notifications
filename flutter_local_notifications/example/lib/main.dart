@@ -3231,7 +3231,7 @@ class _HomePageState extends State<HomePage> {
                       child: const Text('Get messaging style'),
                       onPressed: () {
                         _getActiveNotificationMessagingStyle(
-                          activeNotification.id!,
+                          activeNotification.id! as int,
                           activeNotification.tag,
                         );
                       },

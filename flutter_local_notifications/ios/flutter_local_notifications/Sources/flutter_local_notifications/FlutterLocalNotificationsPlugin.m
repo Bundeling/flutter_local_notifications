@@ -15,10 +15,43 @@
 static FlutterPluginRegistrantCallback registerPlugins;
 static ActionEventSink *actionEventSink;
 
+// Keeps a background-launched process alive while the background isolate
+// handles an action; without an assertion iOS may suspend the app as soon as
+// the notification delegate returns its completion handler.
+static NSMutableArray<NSNumber *> *backgroundActionTaskIds;
+
+static void beginBackgroundActionTask(void) {
+  if (backgroundActionTaskIds == nil) {
+    backgroundActionTaskIds = [NSMutableArray array];
+  }
+  __block UIBackgroundTaskIdentifier taskId = UIBackgroundTaskInvalid;
+  taskId = [[UIApplication sharedApplication]
+      beginBackgroundTaskWithName:
+          @"flutter_local_notifications background action"
+                expirationHandler:^{
+                  [backgroundActionTaskIds removeObject:@(taskId)];
+                  [[UIApplication sharedApplication] endBackgroundTask:taskId];
+                }];
+  if (taskId != UIBackgroundTaskInvalid) {
+    [backgroundActionTaskIds addObject:@(taskId)];
+  }
+}
+
+static void endOldestBackgroundActionTask(void) {
+  NSNumber *taskId = backgroundActionTaskIds.firstObject;
+  if (taskId == nil) {
+    return;
+  }
+  [backgroundActionTaskIds removeObjectAtIndex:0];
+  [[UIApplication sharedApplication]
+      endBackgroundTask:taskId.unsignedIntegerValue];
+}
+
 NSString *const FOREGROUND_ACTION_IDENTIFIERS =
     @"dexterous.com/flutter/local_notifications/foreground_action_identifiers";
 NSString *const INITIALIZE_METHOD = @"initialize";
 NSString *const GET_CALLBACK_METHOD = @"getCallbackHandle";
+NSString *const BACKGROUND_ACTION_HANDLED_METHOD = @"backgroundActionHandled";
 NSString *const SHOW_METHOD = @"show";
 NSString *const ZONED_SCHEDULE_METHOD = @"zonedSchedule";
 NSString *const PERIODICALLY_SHOW_METHOD = @"periodicallyShow";
@@ -97,7 +130,9 @@ NSString *const TIME_ZONE_NAME = @"timeZoneName";
 NSString *const MATCH_DATE_TIME_COMPONENTS = @"matchDateTimeComponents";
 
 NSString *const NOTIFICATION_ID = @"NotificationId";
+NSString *const NOTIFICATION_ID_FCM = @"not_id";
 NSString *const PAYLOAD = @"payload";
+NSString *const EXTRA = @"extra";
 NSString *const NOTIFICATION_LAUNCHED_APP = @"notificationLaunchedApp";
 NSString *const ACTION_ID = @"actionId";
 NSString *const NOTIFICATION_RESPONSE_TYPE = @"notificationResponseType";
@@ -181,6 +216,9 @@ static FlutterError *getFlutterError(NSError *error) {
     [self initialize:call.arguments result:result];
   } else if ([GET_CALLBACK_METHOD isEqualToString:call.method]) {
     result([_flutterEngineManager getCallbackHandle]);
+  } else if ([BACKGROUND_ACTION_HANDLED_METHOD isEqualToString:call.method]) {
+    endOldestBackgroundActionTask();
+    result(nil);
   } else if ([SHOW_METHOD isEqualToString:call.method]) {
 
     [self show:call.arguments result:result];
@@ -199,7 +237,7 @@ static FlutterError *getFlutterError(NSError *error) {
                  isEqualToString:call.method]) {
     [self openAppNotificationSettings:result];
   } else if ([CANCEL_METHOD isEqualToString:call.method]) {
-    [self cancel:((NSNumber *)call.arguments) result:result];
+    [self cancel:((NSString *)call.arguments) result:result];
   } else if ([CANCEL_ALL_METHOD isEqualToString:call.method]) {
     [self cancelAll:result];
   } else if ([CANCEL_ALL_PENDING_NOTIFICATIONS_METHOD
@@ -384,17 +422,25 @@ static FlutterError *getFlutterError(NSError *error) {
     for (UNNotification *notification in notifications) {
       NSMutableDictionary *activeNotification =
           [[NSMutableDictionary alloc] init];
-      activeNotification[ID] =
-          notification.request.content.userInfo[NOTIFICATION_ID];
+
+        NSDictionary *userInfo = notification.request.content.userInfo;
+
+        // Use the identifier, so it can be cancelled
+        activeNotification[ID] = notification.request.identifier;
+
       if (notification.request.content.title != nil) {
         activeNotification[TITLE] = notification.request.content.title;
       }
       if (notification.request.content.body != nil) {
-        activeNotification[BODY] = notification.request.content.body;
+          activeNotification[BODY] = notification.request.content.body;
       }
-      if (notification.request.content.userInfo[PAYLOAD] != [NSNull null]) {
+
+      if (notification.request.content.userInfo[PAYLOAD] != nil) {
         activeNotification[PAYLOAD] =
             notification.request.content.userInfo[PAYLOAD];
+      } else if (notification.request.content.userInfo[EXTRA] != nil) {
+          activeNotification[PAYLOAD] =
+                  notification.request.content.userInfo[EXTRA];
       }
       if (notification.request.content.threadIdentifier != nil &&
           notification.request.content.threadIdentifier.length > 0) {
@@ -680,12 +726,12 @@ static FlutterError *getFlutterError(NSError *error) {
                        trigger:trigger];
 }
 
-- (void)cancel:(NSNumber *)id
+- (void)cancel:(NSString *)id
         result:(FlutterResult _Nonnull)result API_AVAILABLE(ios(10.0)) {
   UNUserNotificationCenter *center =
       [UNUserNotificationCenter currentNotificationCenter];
   NSArray *idsToRemove =
-      [[NSArray alloc] initWithObjects:[id stringValue], nil];
+      [[NSArray alloc] initWithObjects:id, nil];
   [center removePendingNotificationRequestsWithIdentifiers:idsToRemove];
   [center removeDeliveredNotificationsWithIdentifiers:idsToRemove];
   result(nil);
@@ -1082,6 +1128,9 @@ static FlutterError *getFlutterError(NSError *error) {
       [response.notification.request.identifier integerValue];
   NSString *payload =
       (NSString *)response.notification.request.content.userInfo[PAYLOAD];
+  if(payload == nil) {
+        payload = (NSString *)response.notification.request.content.userInfo[EXTRA];
+  }
   NSNumber *notificationIdNumber = [NSNumber numberWithInteger:notificationId];
   notitificationResponseDict[@"notificationId"] = notificationIdNumber;
   notitificationResponseDict[PAYLOAD] = payload;
@@ -1110,15 +1159,21 @@ static FlutterError *getFlutterError(NSError *error) {
     didReceiveNotificationResponse:(UNNotificationResponse *)response
              withCompletionHandler:(void (^)(void))completionHandler
     API_AVAILABLE(ios(10.0)) {
+    NSString *payload;
   if (![self isAFlutterLocalNotification:response.notification.request.content
                                              .userInfo]) {
-    return;
-  }
+      // Remote push notification from FCM
+        // Payload is under the extra key
+        payload =
+                (NSString *)response.notification.request.content.userInfo[EXTRA];
+  } else {
+        payload =
+                (NSString *)response.notification.request.content.userInfo[PAYLOAD];
+    }
 
-  NSInteger notificationId =
-      [response.notification.request.identifier integerValue];
-  NSString *payload =
-      (NSString *)response.notification.request.content.userInfo[PAYLOAD];
+    NSLog(@"    Payload: %@", payload);
+    NSInteger notificationId =
+            [response.notification.request.identifier integerValue];
 
   if ([response.actionIdentifier
           isEqualToString:UNNotificationDefaultActionIdentifier]) {
@@ -1172,6 +1227,7 @@ static FlutterError *getFlutterError(NSError *error) {
         actionEventSink = [[ActionEventSink alloc] init];
       }
 
+      beginBackgroundActionTask();
       [actionEventSink addItem:notificationResponseDict];
       [_flutterEngineManager startEngineIfNeeded:actionEventSink
                                  registerPlugins:registerPlugins];

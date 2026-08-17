@@ -10,10 +10,23 @@ dependencies:
   clock: ^1.1.0
   flutter:
     sdk: flutter
-  flutter_local_notifications_linux: ^8.0.1
-  flutter_local_notifications_windows: ^3.1.1
-  flutter_local_notifications_web: ^1.0.0
-  flutter_local_notifications_platform_interface: ^12.2.0
+
+  flutter_local_notifications_linux:
+    git:
+      url: https://github.com/Bundeling/flutter_local_notifications.git
+      path: flutter_local_notifications_linux
+  flutter_local_notifications_windows:
+    git:
+      url: https://github.com/Bundeling/flutter_local_notifications.git
+      path: flutter_local_notifications_windows
+  flutter_local_notifications_web:
+    git:
+      url: https://github.com/Bundeling/flutter_local_notifications.git
+      path: flutter_local_notifications_web
+  flutter_local_notifications_platform_interface:
+    git:
+      url: https://github.com/Bundeling/flutter_local_notifications.git
+      path: flutter_local_notifications_platform_interface
   timezone: ^0.11.0
 
 dev_dependencies:

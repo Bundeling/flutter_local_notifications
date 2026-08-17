@@ -221,8 +221,8 @@ class NotificationsPluginBindings {
   /// Cancels a notification with the given ID.
   ///
   /// Only applications with "package identity" (ie, installed with an MSIX installer), can use this.
-  void cancelNotification(ffi.Pointer<NativePlugin> plugin, int id) {
-    return _cancelNotification(plugin, id);
+  void cancelNotification(ffi.Pointer<NativePlugin> plugin, Object id) {
+    return _cancelNotification(plugin, id is String ? int.tryParse(id)! : id as int);
   }
 
   late final _cancelNotificationPtr =

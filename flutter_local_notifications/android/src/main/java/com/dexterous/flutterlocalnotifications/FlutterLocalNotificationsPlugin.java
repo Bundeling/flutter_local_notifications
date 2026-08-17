@@ -278,6 +278,10 @@ public class FlutterLocalNotificationsPlugin
     if (VERSION.SDK_INT >= VERSION_CODES.M) {
       flags |= PendingIntent.FLAG_IMMUTABLE;
     }
+
+    Bundle extras = new Bundle();
+    extras.putString(PAYLOAD, notificationDetails.payload);
+
     PendingIntent pendingIntent =
         PendingIntent.getActivity(context, notificationDetails.id, intent, flags);
     DefaultStyleInformation defaultStyleInformation =
@@ -298,6 +302,7 @@ public class FlutterLocalNotificationsPlugin
             .setPriority(notificationDetails.priority)
             .setOngoing(BooleanUtils.getValue(notificationDetails.ongoing))
             .setSilent(BooleanUtils.getValue(notificationDetails.silent))
+            .setExtras(extras)
             .setOnlyAlertOnce(BooleanUtils.getValue(notificationDetails.onlyAlertOnce));
 
     if (notificationDetails.dismissIsolate != null) {
@@ -498,19 +503,23 @@ public class FlutterLocalNotificationsPlugin
       NotificationDetails notificationDetails,
       NotificationCompat.Builder builder) {
     if (!StringUtils.isNullOrEmpty(notificationDetails.icon)) {
-      builder.setSmallIcon(getDrawableResourceId(context, notificationDetails.icon));
-    } else {
-      SharedPreferences sharedPreferences =
-          context.getSharedPreferences(SHARED_PREFERENCES_KEY, Context.MODE_PRIVATE);
-      String defaultIcon = sharedPreferences.getString(DEFAULT_ICON, null);
-      if (StringUtils.isNullOrEmpty(defaultIcon)) {
-        // for backwards compatibility: this is for handling the old way references to the icon used
-        // to be kept but should be removed in future
-        builder.setSmallIcon(notificationDetails.iconResourceId);
-
-      } else {
-        builder.setSmallIcon(getDrawableResourceId(context, defaultIcon));
+      int icon = getDrawableResourceId(context, notificationDetails.icon);
+      if(icon != 0) {
+        builder.setSmallIcon(icon);
+        return;
       }
+    }
+
+    SharedPreferences sharedPreferences =
+        context.getSharedPreferences(SHARED_PREFERENCES_KEY, Context.MODE_PRIVATE);
+    String defaultIcon = sharedPreferences.getString(DEFAULT_ICON, null);
+    if (StringUtils.isNullOrEmpty(defaultIcon)) {
+      // for backwards compatibility: this is for handling the old way references to the icon used
+      // to be kept but should be removed in future
+      builder.setSmallIcon(notificationDetails.iconResourceId);
+
+    } else {
+      builder.setSmallIcon(getDrawableResourceId(context, defaultIcon));
     }
   }
 
@@ -1656,7 +1665,7 @@ public class FlutterLocalNotificationsPlugin
         activeNotificationPayload.put("body", notification.extras.getCharSequence("android.text"));
         activeNotificationPayload.put(
             "bigText", notification.extras.getCharSequence("android.bigText"));
-
+        activeNotificationPayload.put("payload", notification.extras.getString(PAYLOAD));
         activeNotificationsPayload.add(activeNotificationPayload);
       }
       result.success(activeNotificationsPayload);
@@ -1764,8 +1773,7 @@ public class FlutterLocalNotificationsPlugin
   private NotificationDetails extractNotificationDetails(
       Result result, Map<String, Object> arguments) {
     NotificationDetails notificationDetails = NotificationDetails.from(arguments);
-    if (hasInvalidIcon(result, notificationDetails.icon)
-        || hasInvalidLargeIcon(
+    if (hasInvalidLargeIcon(
             result, notificationDetails.largeIcon, notificationDetails.largeIconBitmapSource)
         || hasInvalidBigPictureResources(result, notificationDetails)
         || hasInvalidRawSoundResource(result, notificationDetails)
