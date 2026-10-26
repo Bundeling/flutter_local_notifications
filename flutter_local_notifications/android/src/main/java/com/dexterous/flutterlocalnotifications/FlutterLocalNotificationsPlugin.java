@@ -6,6 +6,7 @@ import static android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.ActivityOptions;
 import android.app.AlarmManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -39,6 +40,7 @@ import android.util.Log;
 import androidx.annotation.Keep;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.AlarmManagerCompat;
 import androidx.core.app.NotificationCompat;
@@ -70,6 +72,9 @@ import com.dexterous.flutterlocalnotifications.models.styles.BigTextStyleInforma
 import com.dexterous.flutterlocalnotifications.models.styles.DefaultStyleInformation;
 import com.dexterous.flutterlocalnotifications.models.styles.InboxStyleInformation;
 import com.dexterous.flutterlocalnotifications.models.styles.MessagingStyleInformation;
+import com.dexterous.flutterlocalnotifications.models.styles.ProgressStyleInformation;
+import com.dexterous.flutterlocalnotifications.models.styles.ProgressStylePoint;
+import com.dexterous.flutterlocalnotifications.models.styles.ProgressStyleSegment;
 import com.dexterous.flutterlocalnotifications.models.styles.StyleInformation;
 import com.dexterous.flutterlocalnotifications.utils.BooleanUtils;
 import com.dexterous.flutterlocalnotifications.utils.LongUtils;
@@ -81,7 +86,10 @@ import com.google.gson.reflect.TypeToken;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.lang.reflect.Type;
+import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -140,6 +148,8 @@ public class FlutterLocalNotificationsPlugin
   private static final String GET_CALLBACK_HANDLE_METHOD = "getCallbackHandle";
   private static final String ARE_NOTIFICATIONS_ENABLED_METHOD = "areNotificationsEnabled";
   private static final String OPEN_APP_NOTIFICATION_SETTINGS_METHOD = "openAppNotificationSettings";
+  private static final String CAN_POST_PROMOTED_NOTIFICATIONS_METHOD =
+      "canPostPromotedNotifications";
   private static final String CAN_SCHEDULE_EXACT_NOTIFICATIONS_METHOD =
       "canScheduleExactNotifications";
   private static final String CREATE_NOTIFICATION_CHANNEL_GROUP_METHOD =
@@ -282,8 +292,17 @@ public class FlutterLocalNotificationsPlugin
     Bundle extras = new Bundle();
     extras.putString(PAYLOAD, notificationDetails.payload);
 
-    PendingIntent pendingIntent =
-        PendingIntent.getActivity(context, notificationDetails.id, intent, flags);
+    PendingIntent pendingIntent;
+    if (VERSION.SDK_INT >= VERSION_CODES.UPSIDE_DOWN_CAKE) {
+      ActivityOptions activityOptions = ActivityOptions.makeBasic();
+      activityOptions.setPendingIntentCreatorBackgroundActivityStartMode(
+          ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_DENIED);
+      pendingIntent =
+          PendingIntent.getActivity(
+              context, notificationDetails.id, intent, flags, activityOptions.toBundle());
+    } else {
+      pendingIntent = PendingIntent.getActivity(context, notificationDetails.id, intent, flags);
+    }
     DefaultStyleInformation defaultStyleInformation =
         (DefaultStyleInformation) notificationDetails.styleInformation;
     NotificationCompat.Builder builder =
@@ -303,7 +322,10 @@ public class FlutterLocalNotificationsPlugin
             .setOngoing(BooleanUtils.getValue(notificationDetails.ongoing))
             .setSilent(BooleanUtils.getValue(notificationDetails.silent))
             .setExtras(extras)
-            .setOnlyAlertOnce(BooleanUtils.getValue(notificationDetails.onlyAlertOnce));
+            .setOnlyAlertOnce(BooleanUtils.getValue(notificationDetails.onlyAlertOnce))
+            .setRequestPromotedOngoing(
+                BooleanUtils.getValue(notificationDetails.requestPromotedOngoing))
+            .setShortCriticalText(notificationDetails.shortCriticalText);
 
     if (notificationDetails.dismissIsolate != null) {
       Intent deleteIntent = new Intent(context, ActionBroadcastReceiver.class);
@@ -358,10 +380,23 @@ public class FlutterLocalNotificationsPlugin
         }
 
         @SuppressLint("UnspecifiedImmutableFlag")
-        final PendingIntent actionPendingIntent =
-            action.showsUserInterface != null && action.showsUserInterface
-                ? PendingIntent.getActivity(context, requestCode++, actionIntent, actionFlags)
-                : PendingIntent.getBroadcast(context, requestCode++, actionIntent, actionFlags);
+        final PendingIntent actionPendingIntent;
+        if (action.showsUserInterface != null && action.showsUserInterface) {
+          if (VERSION.SDK_INT >= VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            ActivityOptions activityOptions = ActivityOptions.makeBasic();
+            activityOptions.setPendingIntentCreatorBackgroundActivityStartMode(
+                ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_DENIED);
+            actionPendingIntent =
+                PendingIntent.getActivity(
+                    context, requestCode++, actionIntent, actionFlags, activityOptions.toBundle());
+          } else {
+            actionPendingIntent =
+                PendingIntent.getActivity(context, requestCode++, actionIntent, actionFlags);
+          }
+        } else {
+          actionPendingIntent =
+              PendingIntent.getBroadcast(context, requestCode++, actionIntent, actionFlags);
+        }
 
         final Spannable actionTitleSpannable = new SpannableString(action.title);
         if (action.titleColor != null) {
@@ -504,7 +539,7 @@ public class FlutterLocalNotificationsPlugin
       NotificationCompat.Builder builder) {
     if (!StringUtils.isNullOrEmpty(notificationDetails.icon)) {
       int icon = getDrawableResourceId(context, notificationDetails.icon);
-      if(icon != 0) {
+      if (icon != 0) {
         builder.setSmallIcon(icon);
         return;
       }
@@ -516,8 +551,31 @@ public class FlutterLocalNotificationsPlugin
     if (StringUtils.isNullOrEmpty(defaultIcon)) {
       // for backwards compatibility: this is for handling the old way references to the icon used
       // to be kept but should be removed in future
-      builder.setSmallIcon(notificationDetails.iconResourceId);
-
+        if (notificationDetails.iconResourceId != null) {
+        builder.setSmallIcon(notificationDetails.iconResourceId);
+        } else {
+          // No icon on the notification, no persisted default icon, and no legacy
+          // resource id (e.g. a notification serialized by an older version of the
+          // plugin that fires after an app update). Fall back to the application's
+          // own icon so delivery never crashes with an NPE unboxing a null
+          // iconResourceId. See https://github.com/MaikuB/flutter_local_notifications/issues/298
+          // Declaring android:icon is optional, so fall back again to a platform drawable
+          // when the application doesn't have an icon of its own: a notification with no
+          // valid small icon is rejected when it is posted.
+          int fallbackIcon = context.getApplicationInfo().icon;
+          if (fallbackIcon == 0) {
+            fallbackIcon = android.R.drawable.sym_def_app_icon;
+          }
+          Log.w(
+              TAG,
+              "Notification "
+                  + notificationDetails.id
+                  + " has no icon, no default icon has been persisted via initialize(), and no"
+                  + " legacy icon resource id. This can happen when a notification scheduled by an"
+                  + " older version of the plugin is delivered before initialize() has run on the"
+                  + " current install. Falling back to the application's icon.");
+          builder.setSmallIcon(fallbackIcon);
+        }
     } else {
       builder.setSmallIcon(getDrawableResourceId(context, defaultIcon));
     }
@@ -532,7 +590,8 @@ public class FlutterLocalNotificationsPlugin
               .registerSubtype(BigTextStyleInformation.class)
               .registerSubtype(BigPictureStyleInformation.class)
               .registerSubtype(InboxStyleInformation.class)
-              .registerSubtype(MessagingStyleInformation.class);
+              .registerSubtype(MessagingStyleInformation.class)
+              .registerSubtype(ProgressStyleInformation.class);
       GsonBuilder builder =
           new GsonBuilder()
               .registerTypeAdapter(ScheduleMode.class, new ScheduleMode.Deserializer())
@@ -1058,9 +1117,98 @@ public class FlutterLocalNotificationsPlugin
       case Media:
         setMediaStyle(builder);
         break;
+      case Progress:
+        setProgressStyle(context, notificationDetails, builder);
+        break;
       default:
         break;
     }
+  }
+
+  private static void setProgressStyle(
+      Context context,
+      NotificationDetails notificationDetails,
+      NotificationCompat.Builder builder) {
+    ProgressStyleInformation progressStyleInformation =
+        (ProgressStyleInformation) notificationDetails.styleInformation;
+    NotificationCompat.ProgressStyle progressStyle = new NotificationCompat.ProgressStyle();
+    if (progressStyleInformation.progress != null) {
+      progressStyle.setProgress(progressStyleInformation.progress);
+    }
+    if (progressStyleInformation.progressIndeterminate != null) {
+      progressStyle.setProgressIndeterminate(progressStyleInformation.progressIndeterminate);
+    }
+    if (progressStyleInformation.styledByProgress != null) {
+      progressStyle.setStyledByProgress(progressStyleInformation.styledByProgress);
+    }
+    if (progressStyleInformation.segments != null) {
+      List<NotificationCompat.ProgressStyle.Segment> segments = new ArrayList<>();
+      for (ProgressStyleSegment segment : progressStyleInformation.segments) {
+        NotificationCompat.ProgressStyle.Segment builtSegment =
+            new NotificationCompat.ProgressStyle.Segment(segment.length);
+        if (segment.id != null) {
+          builtSegment = builtSegment.setId(segment.id);
+        }
+        if (segment.color != null) {
+          builtSegment = builtSegment.setColor(segment.color);
+        }
+        if (segment.semanticStyle != null) {
+          builtSegment = builtSegment.setSemanticStyle(segment.semanticStyle);
+        }
+        segments.add(builtSegment);
+      }
+      progressStyle.setProgressSegments(segments);
+    }
+    if (progressStyleInformation.points != null) {
+      List<NotificationCompat.ProgressStyle.Point> points = new ArrayList<>();
+      for (ProgressStylePoint point : progressStyleInformation.points) {
+        NotificationCompat.ProgressStyle.Point builtPoint =
+            new NotificationCompat.ProgressStyle.Point(point.position);
+        if (point.id != null) {
+          builtPoint = builtPoint.setId(point.id);
+        }
+        if (point.color != null) {
+          builtPoint = builtPoint.setColor(point.color);
+        }
+        if (point.semanticStyle != null) {
+          builtPoint = builtPoint.setSemanticStyle(point.semanticStyle);
+        }
+        points.add(builtPoint);
+      }
+      progressStyle.setProgressPoints(points);
+    }
+    IconCompat trackerIcon =
+        buildProgressIcon(
+            context,
+            progressStyleInformation.progressTrackerIcon,
+            progressStyleInformation.progressTrackerIconSource);
+    if (trackerIcon != null) {
+      progressStyle.setProgressTrackerIcon(trackerIcon);
+    }
+    IconCompat startIcon =
+        buildProgressIcon(
+            context,
+            progressStyleInformation.progressStartIcon,
+            progressStyleInformation.progressStartIconSource);
+    if (startIcon != null) {
+      progressStyle.setProgressStartIcon(startIcon);
+    }
+    IconCompat endIcon =
+        buildProgressIcon(
+            context,
+            progressStyleInformation.progressEndIcon,
+            progressStyleInformation.progressEndIconSource);
+    if (endIcon != null) {
+      progressStyle.setProgressEndIcon(endIcon);
+    }
+    builder.setStyle(progressStyle);
+  }
+
+  private static IconCompat buildProgressIcon(Context context, Object data, IconSource iconSource) {
+    if (data == null || iconSource == null) {
+      return null;
+    }
+    return getIconFromSource(context, data, iconSource);
   }
 
   private static void setProgress(
@@ -1378,43 +1526,51 @@ public class FlutterLocalNotificationsPlugin
 
   private static String getNextFireDateMatchingDateTimeComponents(
       NotificationDetails notificationDetails) {
+    return getNextFireDateMatchingDateTimeComponents(
+        notificationDetails, Clock.systemDefaultZone());
+  }
+
+  /**
+   * Returns the next local date-time, from now on, that matches the components of the scheduled
+   * date-time.
+   *
+   * <p>Candidate dates advance as calendar dates and keep the scheduled wall-clock time. A {@link
+   * ZonedDateTime} would resolve a time in a daylight saving gap to a later hour, for example 02:30
+   * to 03:30 on the day clocks go forward. That hour would be stored and every later repetition
+   * would keep it. The returned value keeps 02:30, and only the alarm for that one day resolves it
+   * to an instant.
+   */
+  @VisibleForTesting
+  static String getNextFireDateMatchingDateTimeComponents(
+      NotificationDetails notificationDetails, Clock clock) {
     ZoneId zoneId = ZoneId.of(notificationDetails.timeZoneName);
-    ZonedDateTime scheduledDateTime =
-        ZonedDateTime.of(LocalDateTime.parse(notificationDetails.scheduledDateTime), zoneId);
-    ZonedDateTime now = ZonedDateTime.now(zoneId);
-    ZonedDateTime nextFireDate =
-        ZonedDateTime.of(
-            now.getYear(),
-            now.getMonthValue(),
-            now.getDayOfMonth(),
-            scheduledDateTime.getHour(),
-            scheduledDateTime.getMinute(),
-            scheduledDateTime.getSecond(),
-            scheduledDateTime.getNano(),
-            zoneId);
-    while (nextFireDate.isBefore(now)) {
+    LocalDateTime scheduledDateTime = LocalDateTime.parse(notificationDetails.scheduledDateTime);
+    LocalTime time = scheduledDateTime.toLocalTime();
+    ZonedDateTime now = ZonedDateTime.now(clock.withZone(zoneId));
+    LocalDate nextFireDate = now.toLocalDate();
+    while (ZonedDateTime.of(nextFireDate, time, zoneId).isBefore(now)) {
       // adjust to be a date in the future that matches the time
       nextFireDate = nextFireDate.plusDays(1);
     }
     if (notificationDetails.matchDateTimeComponents == DateTimeComponents.Time) {
-      return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate);
+      return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate.atTime(time));
     } else if (notificationDetails.matchDateTimeComponents == DateTimeComponents.DayOfWeekAndTime) {
       while (nextFireDate.getDayOfWeek() != scheduledDateTime.getDayOfWeek()) {
         nextFireDate = nextFireDate.plusDays(1);
       }
-      return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate);
+      return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate.atTime(time));
     } else if (notificationDetails.matchDateTimeComponents
         == DateTimeComponents.DayOfMonthAndTime) {
       while (nextFireDate.getDayOfMonth() != scheduledDateTime.getDayOfMonth()) {
         nextFireDate = nextFireDate.plusDays(1);
       }
-      return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate);
+      return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate.atTime(time));
     } else if (notificationDetails.matchDateTimeComponents == DateTimeComponents.DateAndTime) {
       while (nextFireDate.getMonthValue() != scheduledDateTime.getMonthValue()
           || nextFireDate.getDayOfMonth() != scheduledDateTime.getDayOfMonth()) {
         nextFireDate = nextFireDate.plusDays(1);
       }
-      return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate);
+      return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(nextFireDate.atTime(time));
     }
     return null;
   }
@@ -1586,6 +1742,9 @@ public class FlutterLocalNotificationsPlugin
         break;
       case OPEN_APP_NOTIFICATION_SETTINGS_METHOD:
         openAppNotificationSettings(result);
+        break;
+      case CAN_POST_PROMOTED_NOTIFICATIONS_METHOD:
+        canPostPromotedNotifications(result);
         break;
       case CAN_SCHEDULE_EXACT_NOTIFICATIONS_METHOD:
         setCanScheduleExactNotifications(result);
@@ -2417,6 +2576,11 @@ public class FlutterLocalNotificationsPlugin
     } catch (Exception e) {
       result.success(false);
     }
+  }
+
+  private void canPostPromotedNotifications(Result result) {
+    NotificationManagerCompat notificationManager = getNotificationManager(applicationContext);
+    result.success(notificationManager.canPostPromotedNotifications());
   }
 
   private void setCanScheduleExactNotifications(Result result) {
